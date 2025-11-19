@@ -37,5 +37,9 @@ export const useCalculationHistory = () => {
     setHistory([]);
   };
 
-  return { history, addCalculation, clearHistory };
+  const removeCalculations = (ids: number[]) => {
+    setHistory(prevHistory => prevHistory.filter(item => !ids.includes(item.id)));
+  };
+
+  return { history, addCalculation, clearHistory, removeCalculations };
 };

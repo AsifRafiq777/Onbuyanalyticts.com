@@ -9,10 +9,19 @@ interface InputSectionProps {
   onInputChange: (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => void;
   onSaveCalculation: () => void;
   remainingSaves: number;
+  errors: Record<string, string>;
 }
 
-const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSaveCalculation, remainingSaves }) => {
+const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSaveCalculation, remainingSaves, errors }) => {
   const needsAd = remainingSaves <= 0;
+  const hasErrors = Object.keys(errors).length > 0;
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Prevent invalid characters for numeric inputs
+    if (['e', 'E', '+', '-'].includes(e.key)) {
+      e.preventDefault();
+    }
+  };
   
   return (
     <div>
@@ -44,6 +53,7 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
           value={inputs.salePrice}
           onChange={onInputChange}
           helperText="The price you list the item for, before VAT."
+          error={errors.salePrice}
         />
         <CurrencyInput
           label="Total Item Cost"
@@ -51,6 +61,7 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
           value={inputs.itemCost}
           onChange={onInputChange}
           helperText="Your cost for the item (what you paid for it)."
+          error={errors.itemCost}
         />
         <CurrencyInput
           label="Shipping Charge to Customer"
@@ -58,6 +69,7 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
           value={inputs.shippingCharge}
           onChange={onInputChange}
           helperText="How much the customer pays for shipping."
+          error={errors.shippingCharge}
         />
         <CurrencyInput
           label="Actual Shipping Cost"
@@ -65,6 +77,7 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
           value={inputs.shippingCost}
           onChange={onInputChange}
           helperText="Your actual cost to ship the item."
+          error={errors.shippingCost}
         />
 
         <div>
@@ -76,18 +89,34 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
               type="number"
               name="vatPercentage"
               id="vatPercentage"
-              className="block w-full rounded-md border-slate-300 bg-white pr-8 pl-4 py-2 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              className={`block w-full rounded-md pr-8 pl-4 py-2 sm:text-sm focus:outline-none focus:ring-1 ${
+                errors.vatPercentage
+                  ? 'border-red-300 text-red-900 placeholder-red-300 focus:border-red-500 focus:ring-red-500'
+                  : 'border-slate-300 bg-white focus:border-indigo-500 focus:ring-indigo-500'
+              }`}
               placeholder="20"
               value={inputs.vatPercentage}
               onChange={onInputChange}
+              onKeyDown={handleKeyDown}
               step="0.01"
               min="0"
+              max="100"
             />
             <div className="pointer-events-none absolute inset-y-0 right-0 pr-3 flex items-center">
-              <span className="text-slate-500 sm:text-sm">%</span>
+              {errors.vatPercentage ? (
+                 <svg className="h-5 w-5 text-red-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+                   <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                 </svg>
+              ) : (
+                <span className="text-slate-500 sm:text-sm">%</span>
+              )}
             </div>
           </div>
-          <p className="mt-2 text-xs text-slate-500">Standard UK VAT is 20%.</p>
+          {errors.vatPercentage ? (
+            <p className="mt-2 text-xs text-red-600">{errors.vatPercentage}</p>
+          ) : (
+            <p className="mt-2 text-xs text-slate-500">Standard UK VAT is 20%.</p>
+          )}
         </div>
         
         <div className="sm:col-span-2 mt-4">
@@ -104,12 +133,19 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
       <div className="mt-8 text-center sm:text-left">
         <button
           onClick={onSaveCalculation}
-          className={`w-full sm:w-auto px-6 py-3 text-white font-semibold rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors ${needsAd ? 'bg-teal-600 hover:bg-teal-700 focus:ring-teal-500' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'}`}
+          disabled={hasErrors}
+          className={`w-full sm:w-auto px-6 py-3 text-white font-semibold rounded-lg shadow-md focus:outline-none focus:ring-2 focus:ring-offset-2 transition-colors 
+            ${hasErrors 
+                ? 'bg-slate-400 cursor-not-allowed' 
+                : needsAd 
+                    ? 'bg-teal-600 hover:bg-teal-700 focus:ring-teal-500' 
+                    : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'
+            }`}
           aria-label="Save current calculation to history"
         >
-          {needsAd ? 'Watch Ad to Save' : 'Save Calculation to History'}
+          {hasErrors ? 'Fix Errors to Save' : needsAd ? 'Watch Ad to Save' : 'Save Calculation to History'}
         </button>
-        {!needsAd && (
+        {!needsAd && !hasErrors && (
             <p className="mt-2 text-xs text-slate-500">
                 You have {remainingSaves} free {remainingSaves === 1 ? 'save' : 'saves'} remaining.
             </p>

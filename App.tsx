@@ -11,6 +11,7 @@ import HistorySection from './components/HistorySection';
 import { useCalculationHistory } from './hooks/useCalculationHistory';
 import ExportModal from './components/ExportModal';
 import RewardModal from './components/RewardModal';
+import ShareModal from './components/ShareModal';
 
 
 // --- AdSense Constants ---
@@ -57,23 +58,66 @@ function App() {
     categoryId: 'default',
   });
   
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [exportTarget, setExportTarget] = useState<'current' | 'history' | null>(null);
+  const [exportFilterIds, setExportFilterIds] = useState<number[] | null>(null);
   const [saveCount, setSaveCount] = useState<number>(() => {
     const saved = localStorage.getItem(SAVE_COUNT_STORAGE_KEY);
     return saved ? parseInt(saved, 10) : 0;
   });
   const [showRewardModal, setShowRewardModal] = useState<boolean>(false);
+  const [showShareModal, setShowShareModal] = useState<boolean>(false);
   const postRewardAction = useRef<(() => void) | null>(null);
 
 
-  const { history, addCalculation, clearHistory } = useCalculationHistory();
+  const { history, addCalculation, clearHistory, removeCalculations } = useCalculationHistory();
 
   useEffect(() => {
     localStorage.setItem(SAVE_COUNT_STORAGE_KEY, saveCount.toString());
   }, [saveCount]);
 
+  // Validation Logic
+  const validateField = (name: string, value: string): string | null => {
+    // Allow empty strings (treated as 0 in calc), but if present, must be valid
+    if (value.trim() === '') return null;
+
+    const num = parseFloat(value);
+
+    if (name === 'itemName' || name === 'categoryId') {
+        return null;
+    }
+
+    if (isNaN(num)) {
+        return 'Must be a number';
+    }
+
+    if (num < 0) {
+        return 'Cannot be negative';
+    }
+
+    if (name === 'vatPercentage' && num > 100) {
+        return 'Cannot exceed 100%';
+    }
+
+    return null;
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
+    
+    // Run validation
+    const error = validateField(name, value);
+    
+    setErrors(prev => {
+        const newErrors = { ...prev };
+        if (error) {
+            newErrors[name] = error;
+        } else {
+            delete newErrors[name];
+        }
+        return newErrors;
+    });
+
     setInputs(prev => ({ ...prev, [name]: value }));
   };
 
@@ -142,6 +186,18 @@ function App() {
   };
 
   const handleSaveCalculation = () => {
+    // Final validation check before saving
+    const currentErrors: Record<string, string> = {};
+    Object.keys(inputs).forEach(key => {
+        const error = validateField(key, (inputs as any)[key]);
+        if (error) currentErrors[key] = error;
+    });
+
+    if (Object.keys(currentErrors).length > 0) {
+        setErrors(currentErrors);
+        return;
+    }
+
     const performSave = () => {
         addCalculation(inputs, results);
         setSaveCount(currentCount => currentCount + 1);
@@ -157,7 +213,13 @@ function App() {
 
   const handleLoadCalculation = (savedInputs: UserInputs) => {
     setInputs(savedInputs);
+    setErrors({}); // Clear any existing errors when loading a fresh valid state
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  
+  const handleExportHistory = (ids?: number[]) => {
+    setExportFilterIds(ids || null);
+    setExportTarget('history');
   };
 
   const getCsvContent = (target: 'current' | 'history'): { content: string, filename: string } => {
@@ -198,7 +260,12 @@ function App() {
         'Total Revenue', 'VAT Amount', 'Referral Fee', 'Total OnBuy Fees', 'Total Costs',
         'Net Profit', 'Profit Margin (%)', 'ROI (%)'
       ];
-      const dataRows = history.map(item => [
+      
+      const dataToExport = exportFilterIds 
+        ? history.filter(item => exportFilterIds.includes(item.id)) 
+        : history;
+
+      const dataRows = dataToExport.map(item => [
         item.id, item.timestamp, item.inputs.itemName, item.inputs.salePrice,
         item.inputs.itemCost, item.inputs.shippingCharge, item.inputs.shippingCost,
         item.inputs.vatPercentage, getCategoryName(item.inputs.categoryId),
@@ -220,6 +287,7 @@ function App() {
     const { content, filename } = getCsvContent(exportTarget);
     downloadCsv(content, filename);
     setExportTarget(null);
+    setExportFilterIds(null);
   };
 
   const handleGoogleSheetsExport = () => {
@@ -230,6 +298,7 @@ function App() {
     const url = `https://docs.google.com/spreadsheets/create?name=${encodeURIComponent(sheetName)}&csv_data=${encodedCsv}`;
     window.open(url, '_blank');
     setExportTarget(null);
+    setExportFilterIds(null);
   };
 
   const handlePdfExport = () => {
@@ -291,10 +360,14 @@ function App() {
       doc.setTextColor(0, 0, 0);
       doc.text('OnBuy Calculation History', 14, 35);
       
+      const dataToExport = exportFilterIds 
+        ? history.filter(item => exportFilterIds.includes(item.id)) 
+        : history;
+
       const head = [
         'Item Name', 'Sale Price', 'Item Cost', 'Shipping Charge', 'Shipping Cost', 'Net Profit', 'Profit Margin'
       ];
-      const body = history.map(item => [
+      const body = dataToExport.map(item => [
         item.inputs.itemName || 'N/A',
         `£${item.inputs.salePrice}`,
         `£${item.inputs.itemCost}`,
@@ -315,6 +388,7 @@ function App() {
     }
 
     setExportTarget(null);
+    setExportFilterIds(null);
   };
 
   const remainingSaves = Math.max(0, MAX_FREE_SAVES - saveCount);
@@ -322,7 +396,7 @@ function App() {
   return (
     <>
       <div className="min-h-screen bg-slate-50 text-slate-800 font-sans">
-        <Header />
+        <Header onOpenShare={() => setShowShareModal(true)} />
         <main className="container mx-auto px-4 py-8">
           <div className="max-w-6xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-10">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12">
@@ -331,6 +405,7 @@ function App() {
                 onInputChange={handleInputChange}
                 onSaveCalculation={handleSaveCalculation}
                 remainingSaves={remainingSaves}
+                errors={errors}
               />
               <ResultsSection results={results} onExportCalculation={() => setExportTarget('current')} />
             </div>
@@ -339,14 +414,18 @@ function App() {
             history={history}
             onLoadCalculation={handleLoadCalculation}
             onClearHistory={clearHistory}
-            onExportHistory={() => setExportTarget('history')}
+            onExportHistory={handleExportHistory}
+            onDeleteHistoryItems={removeCalculations}
           />
         </main>
         <Footer />
       </div>
       <ExportModal
         isOpen={!!exportTarget}
-        onClose={() => setExportTarget(null)}
+        onClose={() => {
+          setExportTarget(null);
+          setExportFilterIds(null);
+        }}
         onDownloadCsv={handleDownloadCsv}
         onGoogleSheets={handleGoogleSheetsExport}
         onPdfExport={handlePdfExport}
@@ -356,6 +435,10 @@ function App() {
         onClose={() => setShowRewardModal(false)}
         onConfirm={handleConfirmReward}
         rewardAmount={MAX_FREE_SAVES}
+      />
+      <ShareModal 
+        isOpen={showShareModal} 
+        onClose={() => setShowShareModal(false)} 
       />
     </>
   );
