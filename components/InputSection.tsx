@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { UserInputs } from '../types';
 import { CATEGORIES } from '../constants';
@@ -47,14 +48,44 @@ const InputSection: React.FC<InputSectionProps> = ({ inputs, onInputChange, onSa
           <p className="mt-2 text-xs text-slate-500">A name to identify this calculation in your history.</p>
         </div>
 
-        <CurrencyInput
-          label="Item Sale Price (ex. VAT)"
-          name="salePrice"
-          value={inputs.salePrice}
-          onChange={onInputChange}
-          helperText="The price you list the item for, before VAT."
-          error={errors.salePrice}
-        />
+        <div className="sm:col-span-1">
+          <div className="flex justify-between items-center mb-1">
+            <label htmlFor="salePrice" className="block text-sm font-medium text-slate-700">
+              Item Sale Price
+            </label>
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5">
+               <label className={`cursor-pointer px-2 py-0.5 text-xs rounded-md transition-colors ${!inputs.priceIncludesVat ? 'bg-white text-indigo-600 shadow-sm font-medium' : 'text-slate-500'}`}>
+                  <input 
+                    type="radio" 
+                    name="priceIncludesVat" 
+                    className="sr-only"
+                    checked={!inputs.priceIncludesVat}
+                    onChange={() => onInputChange({ target: { name: 'priceIncludesVat', value: 'false', type: 'checkbox', checked: false } } as any)}
+                  />
+                  Ex. VAT
+               </label>
+               <label className={`cursor-pointer px-2 py-0.5 text-xs rounded-md transition-colors ${inputs.priceIncludesVat ? 'bg-white text-indigo-600 shadow-sm font-medium' : 'text-slate-500'}`}>
+                  <input 
+                    type="radio" 
+                    name="priceIncludesVat" 
+                    className="sr-only"
+                    checked={inputs.priceIncludesVat}
+                    onChange={() => onInputChange({ target: { name: 'priceIncludesVat', value: 'true', type: 'checkbox', checked: true } } as any)}
+                  />
+                  Inc. VAT
+               </label>
+            </div>
+          </div>
+          <CurrencyInput
+            label="" // Label handled above
+            name="salePrice"
+            value={inputs.salePrice}
+            onChange={onInputChange}
+            helperText={`Price you list for, ${inputs.priceIncludesVat ? 'including' : 'excluding'} VAT.`}
+            error={errors.salePrice}
+          />
+        </div>
+
         <CurrencyInput
           label="Total Item Cost"
           name="itemCost"

@@ -1,3 +1,4 @@
+
 export interface Category {
   id: string;
   name: string;
@@ -12,6 +13,7 @@ export interface UserInputs {
   shippingCost: string;
   vatPercentage: string;
   categoryId: string;
+  priceIncludesVat: boolean;
 }
 
 export interface CalculatedResults {

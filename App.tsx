@@ -1,3 +1,4 @@
+
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -56,6 +57,7 @@ function App() {
     shippingCost: '',
     vatPercentage: '20',
     categoryId: 'default',
+    priceIncludesVat: false,
   });
   
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -79,7 +81,8 @@ function App() {
   // Validation Logic
   const validateField = (name: string, value: string): string | null => {
     // Allow empty strings (treated as 0 in calc), but if present, must be valid
-    if (value.trim() === '') return null;
+    if (typeof value === 'string' && value.trim() === '') return null;
+    if (typeof value !== 'string') return null; // Skip validation for boolean etc.
 
     const num = parseFloat(value);
 
@@ -103,26 +106,64 @@ function App() {
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target;
     
-    // Run validation
-    const error = validateField(name, value);
-    
-    setErrors(prev => {
-        const newErrors = { ...prev };
-        if (error) {
-            newErrors[name] = error;
-        } else {
-            delete newErrors[name];
-        }
-        return newErrors;
-    });
+    let nextValue: any = value;
+    if (type === 'checkbox' || type === 'radio') {
+        nextValue = (e.target as HTMLInputElement).checked;
+    }
 
-    setInputs(prev => ({ ...prev, [name]: value }));
+    // Create temporary inputs to check cross-field validation
+    const nextInputs = { ...inputs, [name]: nextValue };
+
+    // Run basic field validation (skip for boolean toggle)
+    let error = type !== 'checkbox' && type !== 'radio' ? validateField(name, value) : null;
+    
+    const newErrors = { ...errors };
+    
+    if (error) {
+        newErrors[name] = error;
+    } else {
+        delete newErrors[name];
+    }
+
+    // Cross-field validation: Sale Price vs Item Cost
+    // We need to normalize sale price to Ex VAT for comparison if we want strict 'money in vs money out', 
+    // OR just compare raw numbers. comparing Ex VAT Sale Price vs Cost is usually correct for margin.
+    // However, typically validation just ensures Sale Price > 0.
+    // Let's check if Sale Price (Ex VAT) < Item Cost.
+    
+    const rawSalePrice = parseFloat(nextInputs.salePrice);
+    const itemCost = parseFloat(nextInputs.itemCost);
+    const vatRate = parseFloat(nextInputs.vatPercentage) || 0;
+    
+    let salePriceExVat = rawSalePrice;
+    if (nextInputs.priceIncludesVat) {
+        salePriceExVat = rawSalePrice / (1 + vatRate / 100);
+    }
+
+    if (!isNaN(salePriceExVat) && !isNaN(itemCost) && nextInputs.salePrice !== '' && nextInputs.itemCost !== '') {
+      if (salePriceExVat < itemCost) {
+        if (!newErrors.salePrice) { 
+           newErrors.salePrice = 'Net Sale Price is lower than Item Cost';
+        }
+      } else {
+        if (newErrors.salePrice === 'Net Sale Price is lower than Item Cost') {
+          delete newErrors.salePrice;
+        }
+      }
+    } else {
+       if (newErrors.salePrice === 'Net Sale Price is lower than Item Cost') {
+          delete newErrors.salePrice;
+       }
+    }
+
+    setErrors(newErrors);
+    setInputs(nextInputs);
   };
 
   const results: CalculatedResults = useMemo(() => {
-    const salePriceExVat = parseFloat(inputs.salePrice) || 0;
+    const salePriceInput = parseFloat(inputs.salePrice) || 0;
     const itemCost = parseFloat(inputs.itemCost) || 0;
     const shippingCharge = parseFloat(inputs.shippingCharge) || 0;
     const shippingCost = parseFloat(inputs.shippingCost) || 0;
@@ -130,8 +171,20 @@ function App() {
 
     const selectedCategory = CATEGORIES.find(c => c.id === inputs.categoryId) || CATEGORIES.find(c => c.id === 'default')!;
 
-    const vatAmount = salePriceExVat * (vatPercentage / 100);
-    const salePriceIncVat = salePriceExVat + vatAmount;
+    let salePriceExVat = 0;
+    let salePriceIncVat = 0;
+
+    if (inputs.priceIncludesVat) {
+        // User entered Inc VAT price
+        salePriceIncVat = salePriceInput;
+        salePriceExVat = salePriceInput / (1 + vatPercentage / 100);
+    } else {
+        // User entered Ex VAT price
+        salePriceExVat = salePriceInput;
+        salePriceIncVat = salePriceExVat * (1 + vatPercentage / 100);
+    }
+
+    const vatAmount = salePriceIncVat - salePriceExVat;
 
     // Total Revenue is what the customer pays
     const totalRevenue = salePriceIncVat + shippingCharge;
@@ -144,6 +197,10 @@ function App() {
     const totalCosts = itemCost + shippingCost + totalOnBuyFees;
 
     // Net profit is based on the ex-VAT revenue, as VAT is paid to the government.
+    // Revenue for seller = Sale Price Ex VAT + Shipping Charge
+    // Wait: Shipping Charge usually includes VAT if seller is VAT registered? 
+    // For simplicity in this calculator, we treat shipping charge as revenue. 
+    // Ideally we'd ask if shipping includes VAT too, but let's assume shipping charge is revenue and we pay cost.
     const netRevenue = salePriceExVat + shippingCharge;
     const netProfit = netRevenue - totalCosts;
 
@@ -187,11 +244,29 @@ function App() {
 
   const handleSaveCalculation = () => {
     // Final validation check before saving
-    const currentErrors: Record<string, string> = {};
+    const currentErrors: Record<string, string> = { ...errors };
+    
     Object.keys(inputs).forEach(key => {
-        const error = validateField(key, (inputs as any)[key]);
-        if (error) currentErrors[key] = error;
+        if (key !== 'priceIncludesVat') {
+            const error = validateField(key, (inputs as any)[key]);
+            if (error) currentErrors[key] = error;
+        }
     });
+
+    // Cross field check
+    const rawSalePrice = parseFloat(inputs.salePrice);
+    const itemCost = parseFloat(inputs.itemCost);
+    const vatRate = parseFloat(inputs.vatPercentage) || 0;
+    let salePriceExVat = rawSalePrice;
+    if (inputs.priceIncludesVat) {
+        salePriceExVat = rawSalePrice / (1 + vatRate / 100);
+    }
+
+    if (!isNaN(salePriceExVat) && !isNaN(itemCost) && inputs.salePrice !== '' && inputs.itemCost !== '') {
+        if (salePriceExVat < itemCost) {
+             currentErrors.salePrice = 'Net Sale Price is lower than Item Cost';
+        }
+    }
 
     if (Object.keys(currentErrors).length > 0) {
         setErrors(currentErrors);
@@ -212,7 +287,11 @@ function App() {
   };
 
   const handleLoadCalculation = (savedInputs: UserInputs) => {
-    setInputs(savedInputs);
+    // Backward compatibility for old history items without priceIncludesVat
+    setInputs({
+        ...savedInputs,
+        priceIncludesVat: savedInputs.priceIncludesVat ?? false
+    });
     setErrors({}); // Clear any existing errors when loading a fresh valid state
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -235,7 +314,7 @@ function App() {
       const rows = [
         ['Metric', 'Value'],
         ['Item Name', inputs.itemName || 'N/A'],
-        ['Item Sale Price (ex. VAT)', `£${inputs.salePrice}`],
+        [`Item Sale Price (${inputs.priceIncludesVat ? 'inc.' : 'ex.'} VAT)`, `£${inputs.salePrice}`],
         ['Total Item Cost', `£${inputs.itemCost}`],
         ['Shipping Charge to Customer', `£${inputs.shippingCharge}`],
         ['Actual Shipping Cost', `£${inputs.shippingCost}`],
@@ -265,15 +344,25 @@ function App() {
         ? history.filter(item => exportFilterIds.includes(item.id)) 
         : history;
 
-      const dataRows = dataToExport.map(item => [
-        item.id, item.timestamp, item.inputs.itemName, item.inputs.salePrice,
-        item.inputs.itemCost, item.inputs.shippingCharge, item.inputs.shippingCost,
-        item.inputs.vatPercentage, getCategoryName(item.inputs.categoryId),
-        item.results.totalRevenue.toFixed(2), item.results.vatAmount.toFixed(2),
-        item.results.referralFee.toFixed(2), item.results.totalOnBuyFees.toFixed(2),
-        item.results.totalCosts.toFixed(2), item.results.netProfit.toFixed(2),
-        item.results.profitMargin.toFixed(2), item.results.roi.toFixed(2),
-      ]);
+      const dataRows = dataToExport.map(item => {
+          // Normalize sale price to Ex VAT for the history export table
+          const rawPrice = parseFloat(item.inputs.salePrice) || 0;
+          const rate = parseFloat(item.inputs.vatPercentage) || 0;
+          const exVatPrice = item.inputs.priceIncludesVat 
+            ? rawPrice / (1 + rate / 100)
+            : rawPrice;
+
+          return [
+            item.id, item.timestamp, item.inputs.itemName, 
+            exVatPrice.toFixed(2),
+            item.inputs.itemCost, item.inputs.shippingCharge, item.inputs.shippingCost,
+            item.inputs.vatPercentage, getCategoryName(item.inputs.categoryId),
+            item.results.totalRevenue.toFixed(2), item.results.vatAmount.toFixed(2),
+            item.results.referralFee.toFixed(2), item.results.totalOnBuyFees.toFixed(2),
+            item.results.totalCosts.toFixed(2), item.results.netProfit.toFixed(2),
+            item.results.profitMargin.toFixed(2), item.results.roi.toFixed(2),
+          ];
+      });
       csvRows.push(headers.map(formatCsvField).join(','));
       csvRows.push(...dataRows.map(row => row.map(formatCsvField).join(',')));
       filename = 'onbuy-calculation-history.csv';
@@ -326,7 +415,7 @@ function App() {
         head: [['Metric', 'Value']],
         body: [
           ['Item Name', inputs.itemName || 'N/A'],
-          ['Item Sale Price (ex. VAT)', `£${inputs.salePrice}`],
+          [`Item Sale Price (${inputs.priceIncludesVat ? 'inc.' : 'ex.'} VAT)`, `£${inputs.salePrice}`],
           ['Total Item Cost', `£${inputs.itemCost}`],
           ['Shipping Charge to Customer', `£${inputs.shippingCharge}`],
           ['Actual Shipping Cost', `£${inputs.shippingCost}`],
@@ -365,17 +454,26 @@ function App() {
         : history;
 
       const head = [
-        'Item Name', 'Sale Price', 'Item Cost', 'Shipping Charge', 'Shipping Cost', 'Net Profit', 'Profit Margin'
+        'Item Name', 'Sale Price (ex. VAT)', 'Item Cost', 'Shipping Charge', 'Shipping Cost', 'Net Profit', 'Profit Margin'
       ];
-      const body = dataToExport.map(item => [
-        item.inputs.itemName || 'N/A',
-        `£${item.inputs.salePrice}`,
-        `£${item.inputs.itemCost}`,
-        `£${item.inputs.shippingCharge}`,
-        `£${item.inputs.shippingCost}`,
-        `£${item.results.netProfit.toFixed(2)}`,
-        `${item.results.profitMargin.toFixed(2)}%`
-      ]);
+      const body = dataToExport.map(item => {
+        // Normalize to Ex VAT for report consistency
+        const rawPrice = parseFloat(item.inputs.salePrice) || 0;
+        const rate = parseFloat(item.inputs.vatPercentage) || 0;
+        const exVatPrice = item.inputs.priceIncludesVat 
+            ? rawPrice / (1 + rate / 100)
+            : rawPrice;
+        
+        return [
+            item.inputs.itemName || 'N/A',
+            `£${exVatPrice.toFixed(2)}`,
+            `£${item.inputs.itemCost}`,
+            `£${item.inputs.shippingCharge}`,
+            `£${item.inputs.shippingCost}`,
+            `£${item.results.netProfit.toFixed(2)}`,
+            `${item.results.profitMargin.toFixed(2)}%`
+        ];
+      });
 
       (doc as any).autoTable({
         startY: 45,
